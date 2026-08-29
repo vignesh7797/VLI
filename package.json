@@ -1,0 +1,8 @@
+{
+  "name": "vli",
+  "version": "1.0.0",
+  "description": "Simple Vanilla JavaScript CLI",
+  "bin": {
+    "vli": "./bin/cli.js"
+  }
+}
