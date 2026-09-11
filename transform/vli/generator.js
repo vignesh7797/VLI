@@ -6,6 +6,10 @@ function compileView(view, actions, state) {
 
     const stateNames = new Set(state.map( item => item.name));
 
+
+    /**
+     * Event Binding
+     */
     view = view.replace(/@click\s*=\s*"([A-Za-z_$][\w$]*)"/g, (
         match, actionName
     ) => {
@@ -19,6 +23,55 @@ function compileView(view, actions, state) {
     });
 
     /**
+     * Two way value Binidng
+     */
+
+    view = view.replace(/\bbind:value\s*=\s*"([A-Za-z_$][\w$]*)"/g, 
+        (match, stateName) => {
+            if(!stateNames.has(stateName)){
+                throw new Error(`[VORMIR GENERATOR] Unknown state "${stateName}" used in bind:value`);
+            }
+
+            console.log('[VORMIR GENERATOR] Two-way value binding:', stateName);
+            
+            return `data-vormir-bind-value="${stateName}"` + `data-vormir-model="${stateName}"`;
+        }
+    );
+    
+
+    /**
+     * Value Binding
+     */
+    view = view.replace(/\bvalue\s*=\s*\{([A-Za-z_$][\w$]*)\}/g, 
+        (match, stateName) => {
+            console.log('[VORMIR GENERATOR] Value binding:', stateName);
+            
+            return `data-vormir-bind-value="${stateName}"`;
+        }
+    );
+
+
+    /**
+     * Property Binding
+     */
+    const booleanProperties = ['checked', 'disabled', 'hidden'];
+
+    for(const property of booleanProperties) {
+        const pattern = new RegExp(`\\b${property}\\s*=\\s*\\{([A-Za-z_$][\\w$]*)\\}`, 'g');
+
+        view = view.replace(pattern, (match, stateName) => {
+            if(!stateNames.has(stateName)){
+                throw new Error(`[VORMIR GENERATOR] Unknown state "${stateName}" used in ${property} binding`);
+            }
+
+            console.log('[VORMIR GENERATOR] property binding:', {property, state: stateName});
+            
+            return (`data-vormir-bind-${property}="${stateName}"`);
+        })
+    }
+
+
+    /**
      * Reactive text bindings
      */
     view = view.replace(/\{([A-Za-z_$][\w$]*)\}/g, (match, stateName) => {
@@ -27,48 +80,11 @@ function compileView(view, actions, state) {
         }
 
         return (
-            `<span data-vormir-bind="${stateName}"></span>`
+            `<span data-vormir-bind-text="${stateName}"></span>`
         );
     });
 
     return JSON.stringify(view);
-
-    // const parts = [];
-
-    // let lastIndex = 0;
-
-    // const interpolationRegex = /\{([A-Za-z_$][\w$]*)\}/g;
-
-    // let match;
-
-    // while ((match = interpolationRegex.exec(view)) !== null) {
-    //     const staticPart = view.slice(lastIndex, match.index);
-
-    //     if(staticPart) {
-    //         parts.push(JSON.stringify(staticPart));
-    //     }
-
-    //     const identifier = match[1];
-
-    //     console.log('[VORMIR GENERATOR] Interpolation:', identifier);
-
-    //     parts.push(`String(${identifier})`);
-
-    //     lastIndex = match.index + match[0].length;
-    // }
-
-    // const remaining = view.slice(lastIndex);
-
-    // if(remaining) {
-    //     parts.push(JSON.stringify(remaining));
-    // }
-
-    // if(parts.length === 0){
-    //     return JSON.stringify(view);
-    // }
-
-    // return parts.join('+');
-
 }
 
 function generateState(state) {
@@ -144,16 +160,68 @@ function generateBindingUpdaters(state) {
         ({name}) => {
             return `
                 function __vormirUpdate_${name}() {
-                    const elements = __vormirBindings.get(${JSON.stringify(name)});
+                    const bindings = __vormirBindings.get(${JSON.stringify(name)});
 
-                    if(!elements) {
+                    if(!bindings){
+                        console.log('[VORMIR REACTIVITY] No DOM binding:', ${JSON.stringify(name)}, bindings);    
+
                         return;
                     }
 
-                    console.log('[VORMIR REACTIVITY] Updating:', ${JSON.stringify(name)}, '->', ${name});
+                    console.log('[VORMIR REACTIVITY] Updating:', ${JSON.stringify(name)}, '->', ${name}, bindings);
 
-                    elements.forEach(element => {
-                        element.textContent = String(${name});    
+                    bindings.forEach(binding => {
+                        if (binding.type === 'text') {
+                            binding.element.textContent = String(${name});
+
+                            console.log('[VORMIR REACTIVITY] Text updated:', ${JSON.stringify(name)});
+
+                            return;
+                        }
+                        
+                        if(binding.type === 'value') {
+                            const nextValue = ${name} == null ? '' : String(${name});
+
+                            if(binding.element.value !== nextValue){
+                                binding.element.value = nextValue;
+                            }
+
+                            console.log('[VORMIR REACTIVITY] Value updated:', ${JSON.stringify(name)});
+
+                            return;
+                        }
+
+                        if(binding.type === 'checked') {
+                            
+                            binding.element.checked = Boolean(${name});
+                            
+
+                            console.log('[VORMIR REACTIVITY] Checked updated:', ${JSON.stringify(name)}, '->', Boolean(${name}));
+
+                            return;
+                        }
+
+                        if(binding.type === 'disabled') {
+                            
+                            binding.element.disabled = Boolean(${name});
+                            
+
+                            console.log('[VORMIR REACTIVITY] Disabled updated:', ${JSON.stringify(name)}, '->', Boolean(${name}));
+
+                            return;
+                        }
+
+                        if(binding.type === 'hidden') {
+                            
+                            binding.element.hidden = Boolean(${name});
+                            
+
+                            console.log('[VORMIR REACTIVITY] Hidden updated:', ${JSON.stringify(name)}, '->', Boolean(${name}));
+
+                            return;
+                        }
+
+                        console.warn('[VORMIR REACTIVITY] Unknown binding type:', binding.type);
                     });
                 }
             `;
@@ -188,6 +256,7 @@ function detectActionStateWrites(body, state) {
     
     return writes;
 }
+
 
 function generateVliModule(parsed, context) {
     console.log('[VORMIR GENERATOR] Generating:', context.id, parsed);
@@ -272,23 +341,55 @@ function generateVliModule(parsed, context) {
 
                 __vormirBindings.clear();
 
-                const elements = __vliRoot.querySelectorAll('[data-vormir-bind]');
+                function registerBinding(stateName, type, element){
 
-                elements.forEach(
-                    (element) => {
-                        const stateName = element.getAttribute('data-vormir-bind');
-                        
-                        if(!__vormirBindings.has(stateName)){
-                            __vormirBindings.set(stateName, []);
-                        }
+                    if(!__vormirBindings.has(stateName)){
+                        __vormirBindings.set(stateName, []);
+                    }
 
-                        __vormirBindings.get(stateName).push(element);
+                    __vormirBindings.get(stateName).push({type, element});
 
-                        console.log('[VORMIR REACTIVITY] Binding registered:', stateName);
+                    console.log('[VORMIR REACTIVITY] Binding registered:', {state: stateName, type});
+                }
+
+                const textElements = __vliRoot.querySelectorAll('[data-vormir-bind-text]'); 
+
+                textElements.forEach(
+                     (element) => {
+                        const stateName = element.getAttribute('data-vormir-bind-text');
+
+                        registerBinding(stateName, 'text', element);
+                    }
+                );
+
+                const valuElements = __vliRoot.querySelectorAll('[data-vormir-bind-value]');
+
+                valuElements.forEach(
+                     (element) => {
+                        const stateName = element.getAttribute('data-vormir-bind-value');
+
+                        registerBinding(stateName, 'value', element);
                     }
                 );
 
                 console.log('[VORMIR REACTIVITY] Binding map:', __vormirBindings);
+
+                const propertyBindings = ['checked', 'disabled', 'hidden'];
+
+                propertyBindings.forEach(
+                    (property) => {
+                        console.log('[data-vormir-bind-'+ property +']');
+                        const elements = __vliRoot.querySelectorAll('[data-vormir-bind-'+ property +']');
+                        
+                        elements.forEach(
+                            (element) => {
+                                const stateName = element.getAttribute('data-vormir-bind-'+ property);
+
+                                registerBinding(stateName, property, element);
+                            }
+                        )
+                    }
+                )
             }
 
             function __vormirTrigger(stateName) {
@@ -304,6 +405,51 @@ function generateVliModule(parsed, context) {
                 update();
             }
 
+            function __vormirBindModels() {
+            
+                if(!__vliRoot) {
+                    return;
+                }
+
+                console.log('[VORMIR REACTIVITY] Binding models:', ${componentId});
+
+                const elements = __vliRoot.querySelectorAll('[data-vormir-model]');
+
+                elements.forEach(
+                    (element) => {
+                        const stateName = element.getAttribute('data-vormir-model');
+                        
+                        console.log('[VORMIR REACTIVITY] Model binding:', stateName);
+
+                        element.addEventListener('input', (event) => {
+                            const value = event.target.value;
+                            
+                            console.log('[VORMIR REACTIVITY] Model input:', {state: stateName, value});
+
+                            __vormirSetState(stateName, value);
+                        });
+                    }
+                );
+            }
+
+            function __vormirSetState(stateName, value) {
+                console.log('[VORMIR REACTIVITY] Set state:', {stateName, value});
+
+                switch(stateName) {
+                    ${parsed.state.map(
+                        ({name}) => `
+                            case ${JSON.stringify(name)}:
+                                ${name} = value;
+                                __vormirTrigger(${JSON.stringify(name)});
+                            return;
+                        `
+                    ).join('\n')}
+
+                    default:
+                        console.warn('[VORMIR REACTIVITY] Unknown state:', stateName);
+                }
+            }            
+
             function __vormirMountView() {
                 console.log('[VORMIR COMPONENT] Creating DOM:', ${componentId});
 
@@ -312,6 +458,8 @@ function generateVliModule(parsed, context) {
                 __vormirCollectBindings();
 
                 __vliBindEvents();
+
+                __vormirBindModels();
 
                 Object.keys(__vormirUpdaters).forEach(
                     (stateName) => {
