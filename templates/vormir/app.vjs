@@ -1,0 +1,47 @@
+state {
+  count = 0
+  title = "{{PROJECT_NAME}}"
+}
+
+actions {
+
+  increment() {
+    count += 1
+  }
+
+
+  decrement() {
+    count -= 1
+  }
+}
+
+view {
+
+  <main class="app">
+
+    <h1>
+      {title}
+    </h1>
+
+
+    <p>
+      Built with VLI + Vormir
+    </p>
+
+
+    <h2>
+      Count: {count}
+    </h2>
+
+
+    <button @click="decrement">
+      -
+    </button>
+
+
+    <button @click="increment">
+      +
+    </button>
+
+  </main>
+}

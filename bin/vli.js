@@ -3,10 +3,17 @@
 const fs = require("fs");
 const path = require("path");
 
+const { askTemplate } = require("../lib/template-prompt");
+const {
+  createProjectFromTemplate,
+  isSupportedTemplate,
+} = require("../lib/template-service");
 const { startDevServer } = require("../lib/dev-server");
+const { buildProject } = require("../lib/builder/build")
 
 const args = process.argv.slice(2);
-const command = args[0];
+const command = args.shift();
+const projectName = args[1];
 
 function formatPageName(fileName) {
   const extension = path.extname(fileName);
@@ -79,6 +86,109 @@ function createProject(projectName) {
   console.log("");
 }
 
+async function handleCreate(args) {
+  const projectName = args[0];
+
+  if (!projectName) {
+    console.error("Usage: vli create <project-name>");
+
+    process.exit(1);
+  }
+
+  let template = getOptionValue(args, "template");
+
+  if (!template) {
+    template = await askTemplate();
+  }
+
+  template = template.toLowerCase();
+
+  if (!isSupportedTemplate(template)) {
+    console.error(`[VLI] Unknown template "${template}".`);
+
+    console.log("[VLI] Available:", getSupportedTemplates().join(", "));
+
+    process.exit(1);
+  }
+
+  const projectPath = path.resolve(process.cwd(), projectName);
+
+  if (require("fs").existsSync(projectPath)) {
+    console.error("[VLI] Folder already exists:", projectName);
+    process.exit(1);
+  }
+
+  console.log("");
+  console.log("[VLI] Creating project...");
+  console.log("[VLI] Project:", projectName);
+  console.log("[VLI] Template:", template);
+
+  createProjectFromTemplate({
+    projectName,
+    projectPath,
+    template,
+  });
+
+  console.log("");
+  console.log("Project created successfully!");
+  console.log("");
+  console.log("Next steps:");
+  console.log(`  cd ${projectName}`);
+  console.log("  vli run");
+  console.log("");
+}
+
+function getOptionValue(
+  args,
+  optionName
+) {
+
+  const prefix =
+    `--${optionName}=`;
+
+
+  const inlineArgument =
+    args.find(
+      (arg) =>
+        arg.startsWith(
+          prefix
+        )
+    );
+
+
+  if (
+    inlineArgument
+  ) {
+
+    return inlineArgument
+      .slice(
+        prefix.length
+      );
+  }
+
+
+  const optionIndex =
+    args.indexOf(
+      `--${optionName}`
+    );
+
+
+  if (
+    optionIndex !== -1 &&
+    args[
+      optionIndex + 1
+    ]
+  ) {
+
+    return args[
+      optionIndex + 1
+    ];
+  }
+
+
+  return null;
+}
+
 function addFile(fileName) {
   if (!fileName) {
     console.error("Please provide a file name with extension.");
@@ -145,13 +255,14 @@ function addFile(fileName) {
 
 function showHelp() {
   console.log(`
-VLI - Vanilla CLI
+VLI - Vormir CLI
 
 Commands:
 
   vli create <project-name>
   vli add <file-name>
   vli run
+  vli build
   vli help
 
 Examples:
@@ -170,23 +281,42 @@ Examples:
 `);
 }
 
-switch (command) {
-  case "create":
-    createProject(args[1]);
-    break;
+async function handleBuild(){
+    const projectRoot = process.cwd();
 
-  case "add":
-    addFile(args[1]);
-    break;
+    console.log('[VLI] Build requested');
 
-  case "run":
-    startDevServer();
-    break;
-
-  case "help":
-    showHelp();
-    break;
-
-  default:
-    showHelp();
+    await buildProject({projectRoot});
 }
+
+async function main() {
+  switch (command) {
+    case "create":
+      await handleCreate(args);
+      break;
+
+    case "add":
+      addFile(args[1]);
+      break;
+
+    case "run":
+      startDevServer();
+      break;
+
+    case "help":
+      showHelp();
+      break;
+    
+    case "build":
+      await handleBuild();
+      break;
+
+    default:
+      showHelp();
+  }
+}
+
+main().catch((error) => {
+  console.error("[VLI] Fatal error:", error);
+  process.exit(1);
+});
